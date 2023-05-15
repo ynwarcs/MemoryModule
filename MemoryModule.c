@@ -60,6 +60,9 @@
 #define HOST_MACHINE IMAGE_FILE_MACHINE_I386
 #endif
 
+// define/undefine to fix the VirtualSize field in section data to enable debugging in x64dbg
+#define FIXUP_SECTIONS_VIRTUAL_SIZE
+
 #include "MemoryModule.h"
 
 struct ExportNameEntry {
@@ -301,6 +304,15 @@ FinalizeSection(PMEMORYMODULE module, PSECTIONFINALIZEDATA sectionData) {
     return TRUE;
 }
 
+static void
+FixupSectionVirtualSize(PIMAGE_SECTION_HEADER section, uintptr_t imageOffset, DWORD pageSize)
+{
+    PIMAGE_SECTION_HEADER nextSection = section + 1;
+    LPVOID sectionAddress = AlignAddressDown((uintptr_t)section->Misc.PhysicalAddress | imageOffset, pageSize);
+    LPVOID nextSectionAddress = AlignAddressDown((uintptr_t)nextSection->Misc.PhysicalAddress | imageOffset, pageSize);
+    section->Misc.VirtualSize = (uintptr_t)nextSectionAddress - (uintptr_t)sectionAddress;
+}
+
 static BOOL
 FinalizeSections(PMEMORYMODULE module)
 {
@@ -319,6 +331,9 @@ FinalizeSections(PMEMORYMODULE module)
     sectionData.size = GetRealSectionSize(module, section);
     sectionData.characteristics = section->Characteristics;
     sectionData.last = FALSE;
+#ifdef FIXUP_SECTIONS_VIRTUAL_SIZE
+    FixupSectionVirtualSize(section, imageOffset, module->pageSize);
+#endif
     section++;
 
     // loop through all sections and change access flags
@@ -339,6 +354,17 @@ FinalizeSections(PMEMORYMODULE module)
             sectionData.size = (((uintptr_t)sectionAddress) + ((uintptr_t) sectionSize)) - (uintptr_t) sectionData.address;
             continue;
         }
+
+#ifdef FIXUP_SECTIONS_VIRTUAL_SIZE
+        if (i != module->headers->FileHeader.NumberOfSections - 1)
+        {
+            FixupSectionVirtualSize(section, imageOffset, module->pageSize);
+        }
+        else
+        {
+            section->Misc.VirtualSize = sectionData.size;
+        }
+#endif
 
         if (!FinalizeSection(module, &sectionData)) {
             return FALSE;
